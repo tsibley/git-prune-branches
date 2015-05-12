@@ -1,0 +1,65 @@
+#!/bin/bash
+# Prunes local git branches that are merged into master and no longer exist on
+# the remote.
+#
+# Originally written while at Best Practical Solutions.  Modified since then
+# while at the University of Washington to remove BPS-specific bits and be a
+# standalone tool.
+verbose=0
+dry_run=0
+
+args=`getopt vnp $*`
+if [ $? != 0 ]; then
+    echo "usage: $(basename $0) [-v] [-n|-p]"
+    exit 1
+fi
+set -- $args
+for arg; do
+    case "$arg" in
+        -v)
+            verbose=1
+            shift;;
+        -n|-p)
+            dry_run=1
+            shift;;
+    esac
+done
+
+function explain() {
+    [[ $verbose == 1 ]] && echo -e "$@"
+}
+
+git fetch --all --prune
+
+[[ $verbose == 1 ]] && exec > >(column -t -s$'\t')
+
+for branch in $(git for-each-ref --format='%(refname:short)' refs/heads/); do
+    # Skip protected refs
+    if [[ "$branch" == "master" ]]; then
+        continue
+    fi
+
+    # Has a remote set?  i.e. there was once an upstream
+    if [[ -z $(git config branch."$branch".remote) ]]; then
+        explain "KEEP\t$branch\tno remote"
+        continue
+    fi
+
+    # Does the upstream exist?
+    if git rev-parse "$branch@{u}" >/dev/null 2>&1; then
+        explain "KEEP\t$branch\tgood upstream"
+        continue
+    fi
+
+    # Is the branch merged into master?
+    if [[ $(git merge-base master "$branch") != $(git rev-parse "$branch") ]]; then
+        explain "KEEP\t$branch\tnot merged into master"
+        continue
+    fi
+
+    if [[ $dry_run == 1 ]]; then
+        echo "DELETE\t$branch"
+    else
+        git branch -D "$branch"
+    fi
+done
